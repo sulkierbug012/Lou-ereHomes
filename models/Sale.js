@@ -3,7 +3,7 @@ const conn = require('../config/db');
 
 var SaleSchema = new mongoose.Schema({
     name:String,
-    price:String,
+    price:Number,
     address:String,
     city:String,
     state:String,

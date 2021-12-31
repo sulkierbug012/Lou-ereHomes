@@ -7,9 +7,14 @@ var morgan = require("morgan");
 var User = require("./models/User");
 var Otp = require("./models/otp");
 var Sale = require("./models/Sale");
+var Profile = require("./models/myprofile");
 var ejs = require("ejs");
 var fs = require("fs");
 var app = express();
+
+var otpcode;
+var cityfilter="";
+var pricefilter = "";
 // set our application port
 app.set("port", 9000);
 
@@ -79,8 +84,9 @@ app
       if (err) {
         res.redirect("/signup");
       } else {
-          console.log(docs)
+        console.log(docs)
         req.session.user = docs;
+        res.cookie('myuser',req.body.username); //storing username
         res.redirect("/profile");
         
       }
@@ -144,6 +150,7 @@ app.get("/logout", (req, res) => {
     res.clearCookie("user_sid");
     res.clearCookie("myuser");
     res.clearCookie("myemail");
+    res.clearCookie("IdofRoom");
     res.redirect("/");
      ///////////////////////////
   } else {
@@ -164,7 +171,7 @@ app.post('/email-send',async(req,res) =>
     const responseType ={};
     if(data)
     {
-      let otpcode = Math.floor((Math.random()*10000) + 1);
+      otpcode = Math.floor((Math.random()*10000) + 1);
       let otpData = new Otp({
         email:req.body.email,
         code: otpcode,
@@ -200,22 +207,25 @@ app.post('/change-password',async(req,res) =>
       if(diff <= 0)
       {
         
-        response.message = 'Token Expired'
-        response.statusText = 'Error'
+        res.redirect("/login")
       }
       else{
+      if(otpcode != req.body.otpcode)
+      {
+        res.redirect("/login")
+      }
+      else
+      {
         let user = await User.findOne({email:req.body.email})
         user.password = req.body.password;
         user.save();
-        response.message = 'Password Changed Successfully'
-        response.text = "Success"
+        res.redirect("/confirmation")
+      }
       }
     }
     else{
-      response.message = 'Invalid OTP'
-      response.statusText = 'Error'
+      res.redirect("/login")
     }
-    res.status(200).json(response);
 })
 
 //route for get SALE
@@ -247,15 +257,10 @@ var upload = multer({ storage: storage })
 app.use('/uploads', express.static('uploads'));
 
 app.post('/Seller', upload.single('profile-file'), async (req, res, next) => {
-  // req.file is the `profile-file` file
-  // req.body will hold the text fields, if there were any
-  // console.log(JSON.stringify(req.file))
-  // var response = '<a href="/">Home</a><br>'
-  // response += "Files uploaded successfully.<br>"
-  // response += `<img src="${req.file.path}" /><br>`
-  // return res.send(response)
+  
   let data = await User.findOne({email:req.cookies.myemail}); //make email cookie here to check..
   const responseType ={};
+  var profileType = "Sale"
     if(data)
     {
       let myRoom = new Sale({
@@ -264,38 +269,123 @@ app.post('/Seller', upload.single('profile-file'), async (req, res, next) => {
         address: req.body.address,
         city: req.body.city,
         state: req.body.state,
-        email: req.body.email,
+        email: req.cookies.myemail,
         phone: req.body.phone,
         stay: req.body.stay,
         Date: req.body.date,
-        image:JSON.stringify(req.file.originalname)
+        image:req.file.path //original name
       })
+      
       let updation = await myRoom.save();
-      responseType.statusText = "Success , "
-      responseType.message = "Your Room is online ";
+      let mysale = new Profile({
+        name:req.body.name,
+        username:req.cookies.myuser,
+        email:req.cookies.myemail,
+        address:req.body.address,
+        city:req.body.city,
+        state:req.body.state,
+        stay:req.body.stay,
+        image:req.file.path,
+        type:profileType
+      })
+      let updateProfile = await mysale.save();
+      res.redirect("/Seller");
     }
     else{
-      responseType.statusText = "Error , "
-      responseType.message = "Email ID does not Exist ";
+      res.redirect("/profile");
     }
-    res.status(200).json(responseType);
+})
 
+//route for get Booking
+
+app.get('/booking', async(req, res) => {
+  if (req.session.user && req.cookies.user_sid) {
+    var response=``;
+    let data = await Sale.find({});
+    console.log(data);
+     res.render('booking',{data});
+  } else {
+    res.redirect("/login");
+  }
+})
+
+//GET route for success
+
+app.get('/success/:id', async(req, res) => {  //will save buyings in database
+  let data = await Sale.findOne({_id:req.params.id});
+  var profileType = "Buy"
+  if(data)
+  {
+     let mysale = new Profile({
+      name:data.name,
+      username:req.cookies.myuser,
+      email:req.cookies.myemail,
+      address:data.address,
+      city:data.city,
+      state:data.state,
+      stay:data.stay,
+      image:data.image,
+      type:profileType
+    })
+    let updateProfile = await mysale.save();
+    res.render('success');
+  }
+  else
+  {
+    res.redirect("/booking");
+  }
+})
+
+//GET route for Confirmation page after password changed
+app.get('/confirmation',async(req,res)=>{
+  res.render('confirmation');
+})
+// get route for deletefromcart
+app.get('/deletefromcart/:id', async(req, res) => {  //this will delete booked and rented rooms from cart
+let data = await Profile.findByIdAndDelete(req.params.id)
+res.redirect("/cart");
+})
+//GET route for our cart
+app.get('/cart', async(req, res) => {  
+  let data = await Profile.find({email:req.cookies.myemail})
+  if(data)
+  {
+    res.render('cart',{data});
+  }
+  else
+  {
+    data = ""
+    res.render('cart',{data});
+  }
+  
+})
+//get route for city filter
+app.get('/cityfilter', async(req, res) => {  
+  res.render('Bycity',{cityfilter});
+  cityfilter="";
+})
+//POST route for city filter
+app.post('/cityfilter', async(req, res) => {  
+  cityfilter = await Sale.find({city: req.body.city});
+  res.redirect("/cityfilter");
+})
+
+//get route for location filter
+app.get('/pricefilter', async(req, res) => {  
+  res.render('Byprice',{pricefilter});
+  pricefilter="";
+})
+
+//POST route for location filter
+app.post('/pricefilter', async(req, res) => {  
+  pricefilter = await Sale.find({price : {$lte : req.body.price}});
+  res.redirect("/pricefilter");
 })
 
 // route for handling 404 requests(unavailable routes)
 app.use(function (req, res, next) {
   res.status(404).send("Sorry can't find that!");
 });
-
-
-
-
-//route for images
-app.get('/Images:filename', function(req, res){
-  var file = fs.readFileSync("Images/"+req.params.filename);
-  res.header("content-type","image/jpg");
-  res.send(file);
-})
 
 const mailer = (email,opt)=>{
 
@@ -329,7 +419,6 @@ const mailer = (email,opt)=>{
   });
   
 } 
-
 
 // start the express server
 app.listen(app.get("port"), () =>
